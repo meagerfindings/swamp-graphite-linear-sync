@@ -1,0 +1,24 @@
+manifestVersion: 1
+name: '@mgreten/graphite-linear-sync'
+version: '2026.05.19.1'
+description: >-
+  Reconcile GitHub/Graphite PR stacks with Linear issue states — scan PRs for
+  ticket references, compare states, and transition Linear issues to match.
+repository: 'https://github.com/meagerfindings/swamp-graphite-linear-sync'
+models:
+  - graphite_linear_sync.ts
+workflows: []
+vaults: []
+drivers: []
+datastores: []
+reports: []
+additionalFiles:
+  - README.md
+  - LICENSE.txt
+labels:
+  - linear
+  - github
+  - graphite
+  - sync
+  - pr
+dependencies: []
