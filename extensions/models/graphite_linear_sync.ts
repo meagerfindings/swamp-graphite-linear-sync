@@ -433,7 +433,7 @@ type ModelContext = {
  */
 export const model = {
   type: "@mgreten/graphite-linear-sync",
-  version: "2026.05.19.1",
+  version: "2026.05.19.2",
   globalArguments: GlobalArgsSchema,
 
   resources: {
