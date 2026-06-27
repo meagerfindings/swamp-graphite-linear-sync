@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: '@mgreten/graphite-linear-sync'
-version: '2026.05.19.2'
+version: '2026.06.27.1'
 description: >-
   Reconcile GitHub/Graphite PR stacks with Linear issue states — scan PRs for
   ticket references, compare states, and transition Linear issues to match.
