@@ -44,7 +44,7 @@ import { z } from "npm:zod@4";
  * - `repo` -- GitHub owner/repo (e.g. "myorg/my-repo") for PR lookups via `gh`.
  * - `repoPath` -- Local filesystem path to the repo, used for `gt` stack detection.
  */
-const GlobalArgsSchema: z.ZodObject<{
+export const GlobalArgsSchema: z.ZodObject<{
   apiKey: z.ZodString;
   teamKeys: z.ZodArray<z.ZodString>;
   repo: z.ZodString;
@@ -70,11 +70,11 @@ const GlobalArgsSchema: z.ZodObject<{
 });
 
 /** Summary of a single GitHub pull request. */
-const PrSummarySchema: z.ZodObject<{
+export const PrSummarySchema: z.ZodObject<{
   number: z.ZodNumber;
   title: z.ZodString;
   headRefName: z.ZodString;
-  state: z.ZodEnum<["OPEN", "MERGED", "CLOSED"]>;
+  state: z.ZodEnum<{ OPEN: "OPEN"; MERGED: "MERGED"; CLOSED: "CLOSED" }>;
   isDraft: z.ZodBoolean;
   mergedAt: z.ZodNullable<z.ZodString>;
   url: z.ZodString;
@@ -347,7 +347,7 @@ interface GhPr {
  * @param teamKeys - Linear team keys to look for.
  * @returns Deduplicated array of identifiers found.
  */
-function extractLinearIds(body: string, teamKeys: string[]): string[] {
+export function extractLinearIds(body: string, teamKeys: string[]): string[] {
   const pattern: RegExp = new RegExp(
     `(${teamKeys.join("|")})-\\d+`,
     "g",
@@ -370,7 +370,7 @@ const STATE_PRIORITY: Record<string, number> = {
  * @param pr - PR summary.
  * @returns Expected Linear state name.
  */
-function prExpectedState(pr: z.infer<typeof PrSummarySchema>): string {
+export function prExpectedState(pr: z.infer<typeof PrSummarySchema>): string {
   if (pr.state === "MERGED") return "Done";
   if (pr.state === "CLOSED") return "Canceled";
   if (pr.isDraft) return "In Progress";
@@ -386,7 +386,7 @@ function prExpectedState(pr: z.infer<typeof PrSummarySchema>): string {
  * @param prs - All PRs referencing this Linear issue.
  * @returns Expected Linear state name.
  */
-function expectedStateForIssue(
+export function expectedStateForIssue(
   prs: z.infer<typeof PrSummarySchema>[],
 ): string {
   const states: string[] = prs.map(prExpectedState);
