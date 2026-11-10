@@ -1,6 +1,6 @@
 # @mgreten/graphite-linear-sync
 
-Reconcile GitHub/Graphite PR stacks with Linear issue states.
+Reconcile GitHub PR stacks with Linear issue states.
 
 Scans your open PRs for Linear ticket references in PR bodies (e.g. `ENG-123`),
 compares PR merge status against the corresponding Linear issue state, and
@@ -11,8 +11,8 @@ optionally transitions Linear issues to match.
 - **Multi-PR conflict resolution**: When multiple PRs reference the same Linear
   issue, the expected state is determined by the least-progressed open PR. An
   issue is only marked Done when *all* referencing PRs are merged.
-- **Graphite stack filtering**: Optionally scope the scan to a specific Graphite
-  stack using the `branch` argument.
+- **GitHub stack filtering**: Optionally scope the scan to the GitHub stack
+  (native stacked PRs) that contains the `branch` argument's PR.
 - **Dry-run by default**: The `true_up` method previews transitions without
   applying them unless you explicitly set `dryRun: false`.
 
@@ -21,7 +21,6 @@ optionally transitions Linear issues to match.
 - **Linear API key**: A personal API key (`lin_api_...`) from
   https://linear.app/settings/api
 - **GitHub CLI**: `gh` must be installed and authenticated (`gh auth login`)
-- **Graphite CLI** (optional): `gt` enables stack-aware filtering
 
 ## Setup
 
@@ -48,7 +47,7 @@ globalArguments:
 # Scan all your open PRs
 swamp model method run my-sync scan_stack
 
-# Scan a specific Graphite stack
+# Scan the GitHub stack containing a branch
 swamp model method run my-sync scan_stack --input '{"branch": "feat/my-feature"}'
 
 # Preview Linear transitions (dry run, default)

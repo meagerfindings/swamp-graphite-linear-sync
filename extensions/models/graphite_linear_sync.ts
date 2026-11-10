@@ -1,7 +1,7 @@
 /**
  * @module @mgreten/graphite-linear-sync
  *
- * Reconcile GitHub/Graphite PR stacks with Linear issue states. Scans PRs for
+ * Reconcile GitHub PR stacks with Linear issue states. Scans PRs for
  * Linear ticket references in PR bodies, compares PR merge status against
  * Linear issue state, and optionally transitions Linear issues to match.
  *
@@ -12,14 +12,15 @@
  * Auth: requires a Linear personal API key (`lin_api_...`) stored as a
  * sensitive global argument. Obtain one from https://linear.app/settings/api.
  * GitHub: uses the `gh` CLI (must be authenticated via `gh auth login`).
- * Graphite: optionally uses the `gt` CLI for stack detection.
+ * Stacks: `scan_stack --branch` scopes to that branch's GitHub stack via the
+ * Stacks REST API (`GET /repos/{repo}/stacks?pull_request=<n>`) through `gh api`.
  *
  * @example
  * ```bash
  * # Scan all your open PRs
  * swamp model method run gl-sync scan_stack
  *
- * # Scan a specific Graphite stack
+ * # Scan the GitHub stack containing a branch
  * swamp model method run gl-sync scan_stack --input '{"branch": "feat/my-feature"}'
  *
  * # Preview Linear transitions (dry run, default)
@@ -42,7 +43,8 @@ import { z } from "npm:zod@4";
  * - `apiKey` -- Linear personal API key, marked sensitive so swamp never logs it.
  * - `teamKeys` -- Linear team keys used to scope PR body scanning and issue queries.
  * - `repo` -- GitHub owner/repo (e.g. "myorg/my-repo") for PR lookups via `gh`.
- * - `repoPath` -- Local filesystem path to the repo, used for `gt` stack detection.
+ * - `repoPath` -- Local filesystem path to the repo. Unused since stack detection
+ *   moved to GitHub's Stacks API; kept so existing instances stay valid.
  */
 export const GlobalArgsSchema: z.ZodObject<{
   apiKey: z.ZodString;
@@ -65,7 +67,7 @@ export const GlobalArgsSchema: z.ZodObject<{
   repoPath: z
     .string()
     .describe(
-      "Local path to the repo for Graphite stack detection (e.g. '/home/user/repos/my-repo')",
+      "Local path to the repo (e.g. '/home/user/repos/my-repo'). Unused since stack detection moved to GitHub's Stacks API; kept for compatibility.",
     ),
 });
 
@@ -323,7 +325,7 @@ async function transitionIssue(
 }
 
 // =============================================================================
-// GitHub/Graphite helpers
+// GitHub helpers
 // =============================================================================
 
 /** Raw PR shape from `gh pr list --json`. */
@@ -455,13 +457,13 @@ export const model = {
   methods: {
     scan_stack: {
       description:
-        "Scan open PRs (optionally filtered to a Graphite stack) for Linear ticket references, compare PR merge status against Linear issue state, and produce a reconciliation report. When multiple PRs reference the same issue, the expected state is gated by the least-progressed open PR.",
+        "Scan open PRs (optionally filtered to one GitHub stack) for Linear ticket references, compare PR merge status against Linear issue state, and produce a reconciliation report. When multiple PRs reference the same issue, the expected state is gated by the least-progressed open PR.",
       arguments: z.object({
         branch: z
           .string()
           .optional()
           .describe(
-            "Branch name to scope to a specific Graphite stack. Omit to scan all your open PRs.",
+            "Branch name whose GitHub stack to scan (just that PR when it is not stacked). Omit to scan all your open PRs.",
           ),
         includeRecent: z
           .boolean()
@@ -512,8 +514,9 @@ export const model = {
 
         if (args.branch) {
           const stackBranches: string[] = await getStackBranches(
-            context.globalArgs.repoPath,
+            repo,
             args.branch,
+            allPrs,
           );
           if (stackBranches.length > 0) {
             const branchSet: Set<string> = new Set(stackBranches);
@@ -778,42 +781,91 @@ export const model = {
 };
 
 // =============================================================================
-// Graphite stack detection
+// GitHub stack detection
 // =============================================================================
 
+/** One stack from GitHub's Stacks REST API, reduced to what scoping needs. */
+export interface GitHubStack {
+  pull_requests: Array<{ number: number; head: { ref: string } }>;
+}
+
 /**
- * Get all branch names in a Graphite stack by parsing `gt log short` output.
- *
- * Falls back to an empty array if `gt` is unavailable or the branch isn't in
- * a stack. This makes Graphite optional — the model works with plain GitHub PRs.
- *
- * @param repoPath - Local filesystem path to the git repo.
- * @param _branch - Branch name (used for future per-branch filtering).
- * @returns Array of branch names in the stack.
+ * Branch names of the stack containing `prNumber`, bottom to top, from a
+ * `GET /repos/{repo}/stacks?pull_request=<n>` response. A PR that is not in a
+ * stack yields `[branch]` so the scan scopes to that single PR.
  */
-async function getStackBranches(
-  repoPath: string,
-  _branch: string,
-): Promise<string[]> {
+export function stackBranchesFromResponse(
+  stacks: GitHubStack[],
+  prNumber: number,
+  branch: string,
+): string[] {
+  const stack = stacks.find((s) =>
+    s.pull_requests.some((pr) => pr.number === prNumber)
+  );
+  return stack ? stack.pull_requests.map((pr) => pr.head.ref) : [branch];
+}
+
+/** Runs `gh` and returns stdout, or null on failure. */
+export type GhRunner = (args: string[]) => Promise<string | null>;
+
+const runGh: GhRunner = async (args) => {
   try {
-    const cmd = new Deno.Command("gt", {
-      args: ["log", "short", "--cwd", repoPath],
+    const output = await new Deno.Command("gh", {
+      args,
       stdout: "piped",
       stderr: "piped",
-    });
-    const output = await cmd.output();
-    if (!output.success) return [];
+    }).output();
+    return output.success ? new TextDecoder().decode(output.stdout) : null;
+  } catch {
+    return null;
+  }
+};
 
-    const text: string = new TextDecoder().decode(output.stdout);
-    const branches: string[] = [];
-    for (const line of text.split("\n")) {
-      const trimmed: string = line.replace(/[│◯◉─┴┘\s]/g, "").trim();
-      if (trimmed && trimmed !== "master" && trimmed !== "main") {
-        const branchName: string = trimmed.replace(/\(.*\)$/, "").trim();
-        if (branchName) branches.push(branchName);
-      }
+/**
+ * Branch names in the GitHub stack that contains `branch`.
+ *
+ * Finds the branch's PR (from the already-listed PRs, else `gh pr list
+ * --head`), then asks GitHub's Stacks API which stack holds it. Returns an
+ * empty array when the PR or the API is unavailable (for example stacked PRs
+ * are not enabled), which leaves the scan unfiltered as before.
+ */
+export async function getStackBranches(
+  repo: string,
+  branch: string,
+  knownPrs: Array<{ number: number; headRefName: string }>,
+  gh: GhRunner = runGh,
+): Promise<string[]> {
+  let prNumber = knownPrs.find((pr) => pr.headRefName === branch)?.number;
+  if (prNumber === undefined) {
+    const listed = await gh([
+      "pr",
+      "list",
+      "--repo",
+      repo,
+      "--head",
+      branch,
+      "--state",
+      "all",
+      "--limit",
+      "1",
+      "--json",
+      "number",
+    ]);
+    try {
+      prNumber = listed ? JSON.parse(listed)[0]?.number : undefined;
+    } catch {
+      prNumber = undefined;
     }
-    return branches;
+  }
+  if (prNumber === undefined) return [];
+
+  const response = await gh([
+    "api",
+    `repos/${repo}/stacks?pull_request=${prNumber}`,
+  ]);
+  if (response === null) return [];
+  try {
+    return stackBranchesFromResponse(JSON.parse(response), prNumber, branch);
   } catch {
     return [];
   }
